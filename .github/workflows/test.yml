@@ -13,22 +13,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 8   # safer for Forge 1.8.9
 
       - name: Grant execute permission for Gradle
         run: chmod +x gradlew
 
       - name: Build project
-        run: ./gradlew clean build copyDependencies
+        run: ./gradlew clean build
 
-      - name: Upload artifacts (jar + dependencies)
+      - name: Upload mod JAR
         uses: actions/upload-artifact@v4
         with:
-          name: forge-style-jar
-          path: |
-            build/libs/*.jar
-            build/dependencies/*.jar
+          name: forge-mod
+          path: build/libs/*.jar
