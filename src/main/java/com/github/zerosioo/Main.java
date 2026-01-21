@@ -10,8 +10,6 @@ import net.minecraft.client.gui.inventory.GuiContainer;
 import net.minecraft.inventory.Slot;
 import net.minecraft.item.ItemStack;
 import net.minecraft.network.play.client.C0EPacketClickWindow;
-import net.minecraft.network.play.server.S2FPacketSetSlot;
-import net.minecraft.network.play.server.S30PacketWindowItems;
 import net.minecraftforge.client.event.GuiScreenEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.Mod;
@@ -20,7 +18,6 @@ import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 import net.minecraftforge.fml.common.network.FMLNetworkEvent;
 
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -28,15 +25,17 @@ import java.util.Map;
 public class Main {
     public static final String MODID = "keepitems";
     public static final String VERSION = "1.0";
-    public static final String NAME = "Fakepixel fucker";
+    public static final String NAME = "Keep Items Mod";
     
     private static boolean keepItemsEnabled = false;
-    private static final int BUTTON_ID = 999999;
+    private static boolean coinDupeMode = false; // New mode for coin duping
+    private static final int TOGGLE_BUTTON_ID = 999999;
+    private static final int MODE_BUTTON_ID = 999998;
     private GuiButton toggleButton;
+    private GuiButton modeButton;
     
-    private Map<Integer, ItemStack> inventorySnapshot = new HashMap<>();
-    private Map<Integer, ItemStack> lastClickedItems = new HashMap<>();
-    private int tickCounter = 0;
+    private Map<Integer, ItemStack> clickedItems = new HashMap<>();
+    private ChannelHandlerContext channelContext = null;
     
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {
@@ -49,145 +48,142 @@ public class Main {
             new ChannelDuplexHandler() {
                 @Override
                 public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception {
+                    channelContext = ctx;
+                    
                     if (keepItemsEnabled && msg instanceof C0EPacketClickWindow) {
                         C0EPacketClickWindow packet = (C0EPacketClickWindow) msg;
                         
-                        // Save the item that's being clicked for restoration
                         Minecraft mc = Minecraft.getMinecraft();
                         if (mc.thePlayer != null && mc.thePlayer.openContainer != null) {
                             int slotId = packet.getSlotId();
+                            
                             if (slotId >= 0 && slotId < mc.thePlayer.openContainer.inventorySlots.size()) {
                                 Slot slot = mc.thePlayer.openContainer.getSlot(slotId);
-                                if (slot != null && slot.getStack() != null && isPlayerInventorySlot(slot)) {
-                                    lastClickedItems.put(slotId, slot.getStack().copy());
+                                
+                                if (slot != null && isPlayerInventorySlot(slot) && slot.getStack() != null) {
+                                    ItemStack clickedStack = slot.getStack().copy();
+                                    clickedItems.put(slotId, clickedStack);
+                                    
+                                    // Send original packet
+                                    super.write(ctx, msg, promise);
+                                    
+                                    // Determine how many times to click back based on mode
+                                    int clickCount = coinDupeMode ? 2 : 1;
+                                    
+                                    // Schedule sending the item back
+                                    new Thread(() -> {
+                                        try {
+                                            for (int i = 0; i < clickCount; i++) {
+                                                final int clickNumber = i;
+                                                Thread.sleep(100 + (i * 50)); // Stagger the clicks
+                                                
+                                                mc.addScheduledTask(() -> {
+                                                    if (mc.thePlayer != null && mc.thePlayer.openContainer != null) {
+                                                        try {
+                                                            short actionNumber = (short) (packet.getActionNumber() + clickNumber + 1);
+                                                            
+                                                            C0EPacketClickWindow restorePacket = new C0EPacketClickWindow(
+                                                                mc.thePlayer.openContainer.windowId,
+                                                                slotId,
+                                                                0,
+                                                                0,
+                                                                clickedStack.copy(),
+                                                                actionNumber
+                                                            );
+                                                            
+                                                            if (channelContext != null) {
+                                                                channelContext.writeAndFlush(restorePacket);
+                                                            }
+                                                            
+                                                            // Update client-side
+                                                            if (slotId < mc.thePlayer.openContainer.inventorySlots.size()) {
+                                                                Slot targetSlot = mc.thePlayer.openContainer.getSlot(slotId);
+                                                                if (targetSlot != null && isPlayerInventorySlot(targetSlot)) {
+                                                                    targetSlot.putStack(clickedStack.copy());
+                                                                }
+                                                            }
+                                                        } catch (Exception e) {
+                                                            e.printStackTrace();
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        } catch (InterruptedException e) {
+                                            e.printStackTrace();
+                                        }
+                                    }).start();
+                                    
+                                    return;
                                 }
                             }
                         }
                     }
                     super.write(ctx, msg, promise);
                 }
-                
-                @Override
-                public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
-                    if (keepItemsEnabled) {
-                        // Intercept server slot update packets
-                        if (msg instanceof S2FPacketSetSlot) {
-                            S2FPacketSetSlot packet = (S2FPacketSetSlot) msg;
-                            Minecraft mc = Minecraft.getMinecraft();
-                            
-                            if (mc.thePlayer != null && mc.thePlayer.openContainer != null) {
-                                int windowId = packet.func_149175_c(); // getWindowId
-                                int slotId = packet.func_149173_d(); // getSlot
-                                
-                                // If this is updating our inventory and we have a saved item
-                                if (windowId == mc.thePlayer.openContainer.windowId && 
-                                    inventorySnapshot.containsKey(slotId)) {
-                                    
-                                    ItemStack savedItem = inventorySnapshot.get(slotId);
-                                    if (savedItem != null) {
-                                        // Create a new packet with our saved item to trick the client
-                                        S2FPacketSetSlot newPacket = new S2FPacketSetSlot(
-                                            windowId, slotId, savedItem.copy()
-                                        );
-                                        super.channelRead(ctx, newPacket);
-                                        
-                                        // Send the item back to server
-                                        scheduleItemRestore(slotId, savedItem.copy());
-                                        return;
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // Intercept bulk window item updates
-                        if (msg instanceof S30PacketWindowItems) {
-                            S30PacketWindowItems packet = (S30PacketWindowItems) msg;
-                            Minecraft mc = Minecraft.getMinecraft();
-                            
-                            if (mc.thePlayer != null && mc.thePlayer.openContainer != null) {
-                                int windowId = packet.func_148911_c(); // getWindowId
-                                
-                                if (windowId == mc.thePlayer.openContainer.windowId && !inventorySnapshot.isEmpty()) {
-                                    ItemStack[] items = packet.getItemStacks();
-                                    ItemStack[] modifiedItems = items.clone();
-                                    
-                                    // Restore our saved items in the packet
-                                    for (Map.Entry<Integer, ItemStack> entry : inventorySnapshot.entrySet()) {
-                                        int slotId = entry.getKey();
-                                        if (slotId >= 0 && slotId < modifiedItems.length) {
-                                            ItemStack saved = entry.getValue();
-                                            if (saved != null) {
-                                                modifiedItems[slotId] = saved.copy();
-                                                scheduleItemRestore(slotId, saved.copy());
-                                            }
-                                        }
-                                    }
-                                    
-                                    // Convert array to List for the constructor
-                                    S30PacketWindowItems newPacket = new S30PacketWindowItems(windowId, Arrays.asList(modifiedItems));
-                                    super.channelRead(ctx, newPacket);
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                    super.channelRead(ctx, msg);
-                }
             }
         );
-    }
-    
-    private void scheduleItemRestore(int slotId, ItemStack item) {
-        // Schedule sending the item back to server on next tick
-        new Thread(() -> {
-            try {
-                Thread.sleep(50); // Small delay
-                Minecraft mc = Minecraft.getMinecraft();
-                if (mc.thePlayer != null && mc.thePlayer.openContainer != null) {
-                    // Click the slot to put item back (creative mode style)
-                    mc.addScheduledTask(() -> {
-                        if (mc.thePlayer.openContainer != null && slotId < mc.thePlayer.openContainer.inventorySlots.size()) {
-                            Slot slot = mc.thePlayer.openContainer.getSlot(slotId);
-                            if (slot != null) {
-                                slot.putStack(item.copy());
-                            }
-                        }
-                    });
-                }
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-        }).start();
     }
     
     @SubscribeEvent
     public void onGuiInit(GuiScreenEvent.InitGuiEvent.Post event) {
         if (event.gui instanceof GuiContainer) {
             GuiScreen gui = event.gui;
-            String buttonText = keepItemsEnabled ? "§a§lKeep Items: ON" : "§c§lKeep Items: OFF";
-            toggleButton = new GuiButton(BUTTON_ID, gui.width - 120, 5, 115, 20, buttonText);
+            
+            // Main toggle button
+            String toggleText = keepItemsEnabled ? "§a§lKeep Items: ON" : "§c§lKeep Items: OFF";
+            toggleButton = new GuiButton(TOGGLE_BUTTON_ID, gui.width - 120, 5, 115, 20, toggleText);
             event.buttonList.add(toggleButton);
+            
+            // Mode button (only show when enabled)
+            if (keepItemsEnabled) {
+                String modeText = coinDupeMode ? "§e§lMode: COIN DUPE" : "§b§lMode: ITEM KEEP";
+                modeButton = new GuiButton(MODE_BUTTON_ID, gui.width - 120, 28, 115, 20, modeText);
+                event.buttonList.add(modeButton);
+            }
         }
     }
     
     @SubscribeEvent
     public void onGuiAction(GuiScreenEvent.ActionPerformedEvent.Post event) {
-        if (event.button.id == BUTTON_ID) {
+        Minecraft mc = Minecraft.getMinecraft();
+        
+        // Toggle main feature
+        if (event.button.id == TOGGLE_BUTTON_ID) {
             keepItemsEnabled = !keepItemsEnabled;
             String buttonText = keepItemsEnabled ? "§a§lKeep Items: ON" : "§c§lKeep Items: OFF";
             event.button.displayString = buttonText;
             
-            Minecraft mc = Minecraft.getMinecraft();
             if (mc.thePlayer != null) {
-                String status = keepItemsEnabled ? "§a§lENABLED §7(Server Sync Active)" : "§c§lDISABLED";
+                String status = keepItemsEnabled ? "§a§lENABLED" : "§c§lDISABLED";
                 mc.thePlayer.addChatMessage(new net.minecraft.util.ChatComponentText(
                     "§6§l[Keep Items] " + status
                 ));
             }
             
             if (!keepItemsEnabled) {
-                inventorySnapshot.clear();
-                lastClickedItems.clear();
+                clickedItems.clear();
+                coinDupeMode = false;
+            }
+            
+            // Refresh GUI to show/hide mode button
+            if (mc.currentScreen != null) {
+                mc.currentScreen.initGui();
+            }
+        }
+        
+        // Toggle mode
+        if (event.button.id == MODE_BUTTON_ID) {
+            coinDupeMode = !coinDupeMode;
+            String modeText = coinDupeMode ? "§e§lMode: COIN DUPE" : "§b§lMode: ITEM KEEP";
+            event.button.displayString = modeText;
+            
+            if (mc.thePlayer != null) {
+                String mode = coinDupeMode ? 
+                    "§e§lCOIN DUPE §7(2x Clicks)" : 
+                    "§b§lITEM KEEP §7(1x Click)";
+                mc.thePlayer.addChatMessage(new net.minecraft.util.ChatComponentText(
+                    "§6§l[Keep Items] Mode: " + mode
+                ));
             }
         }
     }
@@ -195,28 +191,14 @@ public class Main {
     @SubscribeEvent
     public void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
-        tickCounter++;
         
         Minecraft mc = Minecraft.getMinecraft();
         if (mc.thePlayer == null || !keepItemsEnabled) {
-            inventorySnapshot.clear();
             return;
         }
         
-        if (mc.currentScreen instanceof GuiContainer) {
-            GuiContainer container = (GuiContainer) mc.currentScreen;
-            
-            // Update inventory snapshot every tick
-            if (tickCounter % 5 == 0) { // Update every 5 ticks for performance
-                inventorySnapshot.clear();
-                for (Slot slot : container.inventorySlots.inventorySlots) {
-                    if (slot.getStack() != null && isPlayerInventorySlot(slot)) {
-                        inventorySnapshot.put(slot.slotNumber, slot.getStack().copy());
-                    }
-                }
-            }
-        } else {
-            inventorySnapshot.clear();
+        if (mc.currentScreen == null || !(mc.currentScreen instanceof GuiContainer)) {
+            clickedItems.clear();
         }
     }
     
@@ -227,5 +209,9 @@ public class Main {
     
     public static boolean isKeepItemsEnabled() {
         return keepItemsEnabled;
+    }
+    
+    public static boolean isCoinDupeMode() {
+        return coinDupeMode;
     }
 }
