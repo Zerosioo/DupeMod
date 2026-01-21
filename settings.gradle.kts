@@ -23,4 +23,4 @@ plugins {
 }
 
 
-rootProject.name = "EntityCollector"
+rootProject.name = "DupeMod"
