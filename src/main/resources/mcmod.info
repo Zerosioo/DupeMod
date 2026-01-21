@@ -1,8 +1,17 @@
-[{
-  "modid": "keepitems",
-  "name": "Keep Items Mod",
-  "description": "Yeah",
-  "version": "1.0",
-  "mcversion": "1.8.9",
-  "authorList": ["FakepixelsDaddy"]
-}]
+[
+  {
+    "modid": "keepitems",
+    "name": "Fakepixel fucker",
+    "description": "Fucks fakepixel's mommy every sunday",    "version": "${version}",
+    "mcversion": "${mcversion}",
+    "url": "https://github.com/romangraef/Forge1.8.9Template/",
+    "updateUrl": "",
+    "authorList": [
+      "FakepixelsDaddy"
+    ],
+    "credits": "",
+    "logoFile": "",
+    "screenshots": [],
+    "dependencies": []
+  }
+]
