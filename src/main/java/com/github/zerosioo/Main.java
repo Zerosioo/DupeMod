@@ -20,6 +20,7 @@ import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 import net.minecraftforge.fml.common.network.FMLNetworkEvent;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -27,7 +28,7 @@ import java.util.Map;
 public class Main {
     public static final String MODID = "keepitems";
     public static final String VERSION = "1.0";
-    public static final String NAME = "Keep Items Mod";
+    public static final String NAME = "Fakepixel fucker";
     
     private static boolean keepItemsEnabled = false;
     private static final int BUTTON_ID = 999999;
@@ -122,7 +123,8 @@ public class Main {
                                         }
                                     }
                                     
-                                    S30PacketWindowItems newPacket = new S30PacketWindowItems(windowId, modifiedItems);
+                                    // Convert array to List for the constructor
+                                    S30PacketWindowItems newPacket = new S30PacketWindowItems(windowId, Arrays.asList(modifiedItems));
                                     super.channelRead(ctx, newPacket);
                                     return;
                                 }
